@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Recherche bornes</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    input { padding:10px; width:min(520px, 100%); font-size:16px; }
+    button { padding:10px 14px; font-size:16px; cursor:pointer; }
+    #status { margin-top:10px; color:#444; white-space:pre-wrap; }
+    #map { height: 420px; margin-top: 14px; border: 1px solid #ddd; border-radius: 10px; }
+    #results { margin-top: 14px; border: 1px solid #eee; border-radius: 10px; overflow:hidden; }
+    .item { padding: 12px; border-bottom: 1px solid #f0f0f0; }
+    .item:last-child { border-bottom:none; }
+    .item.reco { background: #f1fff1; }
+    .title { font-weight: 700; }
+    .meta { margin-top:4px; color:#555; font-size:14px; line-height:1.35; }
+    .actions { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; color:#444; margin-right:6px; }
+  </style>
+</head>
+<body>
+  <h2>🔎 Recherche bornes (Top 5)</h2>
+
+  <div class="row">
+    <input id="address" placeholder="Adresse intervention (ex: 10 rue de Rivoli, Paris)" />
+    <button id="btnSearch">Rechercher</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="map"></div>
+  <div id="results"></div>
+
+<script>
+  const N8N_WEBHOOK_URL = "https://bornepompier.app.n8n.cloud/webhook/top5-bornes";
+
+  let map = null;
+  let markersLayer = null;
+
+  function setStatus(msg) { document.getElementById("status").innerText = msg || ""; }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
+  }
+
+  function initMap(centerLat, centerLon) {
+    if (map) map.remove();
+    map = L.map("map").setView([centerLat, centerLon], 14);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
+    markersLayer = L.layerGroup().addTo(map);
+  }
+
+  function fitToMarkers(results) {
+    const latlngs = results.map(r => [r.lat, r.lon]);
+    const bounds = L.latLngBounds(latlngs);
+    map.fitBounds(bounds.pad(0.25));
+  }
+
+  function renderResults(results) {
+    const container = document.getElementById("results");
+    container.innerHTML = "";
+    if (!results || results.length === 0) {
+      container.innerHTML = `<div class="item">Aucune borne trouvée.</div>`;
+      return;
+    }
+    results.forEach(r => {
+      const div = document.createElement("div");
+      div.className = "item" + (r.recommended ? " reco" : "");
+      div.innerHTML = `
+        <div class="title">${escapeHtml(r.rank)}️⃣ ${escapeHtml(r.borne_id)} ${r.recommended ? "⭐ Recommandée" : ""}</div>
+        <div class="meta">
+          <span class="pill">${escapeHtml(r.distance_m)} m</span>
+          ${r.debit != null ? `<span class="pill">Débit: ${escapeHtml(r.debit)}</span>` : ``}
+          ${r.etat != null ? `<span class="pill">État: ${escapeHtml(r.etat)}</span>` : ``}
+        </div>
+        <div class="actions">
+          <button onclick="focusOn(${r.lat}, ${r.lon}, '${escapeHtml(r.borne_id)}')">Voir sur la carte</button>
+          <button onclick="chooseBorne('${escapeHtml(r.borne_id)}')">Choisir</button>
+        </div>
+      `;
+      container.appendChild(div);
+    });
+  }
+
+  window.focusOn = function(lat, lon, borneId) {
+    if (!map) return;
+    map.setView([lat, lon], 17);
+    setStatus("📍 " + borneId);
+  };
+
+  window.chooseBorne = function(borneId) {
+    alert("✅ Borne choisie : " + borneId);
+  };
+
+  function normalizeResults(data) {
+    // cas 1: tableau direct
+    if (Array.isArray(data)) return data;
+
+    // cas 2: string JSON (ex: "[{...}]" ou "{...}")
+    if (typeof data === "string") {
+      try {
+        const parsed = JSON.parse(data);
+        return normalizeResults(parsed);
+      } catch { return []; }
+    }
+
+    // cas 3: objet {results: ...}
+    if (data && typeof data === "object" && "results" in data) {
+      return normalizeResults(data.results);
+    }
+
+    return [];
+  }
+
+  async function search() {
+    const address = document.getElementById("address").value.trim();
+    if (!address) { setStatus("⚠️ Entre une adresse."); return; }
+
+    setStatus("⏳ Recherche en cours…");
+    document.getElementById("btnSearch").disabled = true;
+
+    try {
+      const res = await fetch(N8N_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address })
+      });
+
+      const rawText = await res.text();
+      if (!res.ok) throw new Error("Webhook HTTP " + res.status + "\n" + rawText);
+
+      // on parse en JSON si possible
+      let data;
+      try { data = JSON.parse(rawText); } catch { data = rawText; }
+
+      const results = normalizeResults(data);
+
+      if (!results.length) {
+        setStatus("Aucune borne trouvée.\n\nDebug réponse brute :\n" + rawText);
+        renderResults([]);
+        return;
+      }
+
+      initMap(results[0].lat, results[0].lon);
+      markersLayer.clearLayers();
+
+      results.forEach(r => {
+        const popup =
+          `<b>${escapeHtml(r.borne_id)}</b><br>${escapeHtml(r.distance_m)} m` +
+          (r.debit != null ? `<br>Débit: ${escapeHtml(r.debit)}` : ``) +
+          (r.etat != null ? `<br>État: ${escapeHtml(r.etat)}` : ``) +
+          `<br><button onclick="chooseBorne('${escapeHtml(r.borne_id)}')">Choisir</button>`;
+        const marker = L.marker([r.lat, r.lon]).addTo(markersLayer).bindPopup(popup);
+        if (r.recommended) marker.openPopup();
+      });
+
+      fitToMarkers(results);
+      renderResults(results);
+      setStatus("✅ Top 5 affiché. (" + results.length + " résultats)");
+    } catch (e) {
+      setStatus("❌ " + (e?.message || e));
+    } finally {
+      document.getElementById("btnSearch").disabled = false;
+    }
+  }
+
+  document.getElementById("btnSearch").addEventListener("click", search);
+  document.getElementById("address").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") search();
+  });
+
+  initMap(48.8566, 2.3522);
+  setStatus("Entre une adresse puis clique sur Rechercher.");
+</script>
+</body>
+</html>
