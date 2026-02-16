@@ -1,514 +1,112 @@
-<!doctype html>
-<html lang="fr">
+<!DOCTYPE html>
+<html>
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>BornePompier — Top 5 + Itinéraire + Login</title>
+  <title>Carte Camions Pompier</title>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Leaflet Routing Machine (OSRM) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css">
-  <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 
   <style>
-    body { font-family: Arial, sans-serif; margin: 16px; }
-    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    input { padding:10px; width:min(560px, 100%); font-size:16px; }
-    button { padding:10px 14px; font-size:16px; cursor:pointer; }
-    #status { margin-top:10px; color:#444; white-space:pre-wrap; }
-    #map { height: 420px; margin-top: 14px; border: 1px solid #ddd; border-radius: 10px; }
-    #results { margin-top: 14px; border: 1px solid #eee; border-radius: 10px; overflow:hidden; }
-    .item { padding: 12px; border-bottom: 1px solid #f0f0f0; }
-    .item:last-child { border-bottom:none; }
-    .item.reco { background: #f1fff1; }
-    .title { font-weight: 700; }
-    .meta { margin-top:6px; color:#555; font-size:14px; line-height:1.35; }
-    .actions { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
-    .pill { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; color:#444; margin-right:6px; }
-
-    /* Login modal */
-    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index: 9999; }
-    .modal { background:#fff; width:min(520px, 92vw); border-radius: 14px; padding: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
-    .modal h3 { margin: 0 0 10px 0; }
-    .modal p { margin: 6px 0 12px 0; color:#444; }
-    .modal label { display:block; font-size: 13px; color:#333; margin-top:10px; }
-    .modal input { width: 100%; box-sizing:border-box; }
-    .modal .row { justify-content:flex-end; margin-top:12px; }
-    .badge { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid #eee; border-radius:999px; background:#fafafa; }
-    #navPanel { margin-top: 12px; border:1px solid #eee; border-radius: 10px; padding: 10px; }
-    #navPanel h4 { margin: 0 0 8px 0; }
-    #navPanel ol { margin: 0; padding-left: 20px; }
-    #topbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    #logoutBtn { margin-left:auto; }
+    body { margin:0; }
+    #map { height:100vh; width:100%; }
   </style>
 </head>
-
 <body>
-  <div id="topbar">
-    <h2 style="margin:0;">🚒 BornePompier</h2>
-    <div class="badge" id="truckBadge" style="display:none;"></div>
-    <button id="logoutBtn" style="display:none;">Déconnexion</button>
-  </div>
 
-  <p style="margin-top:8px; color:#444;">Recherche d’adresse → Top 5 bornes → itinéraire <b>dans la page</b>.</p>
+<div id="map"></div>
 
-  <div class="row">
-    <input id="address" placeholder="Adresse intervention (ex: 18 rue Jeanne la Corsaire, Nantes)" />
-    <button id="btnSearch">Rechercher</button>
-  </div>
-
-  <div id="status"></div>
-
-  <div id="map"></div>
-
-  <div id="navPanel" style="display:none;">
-    <h4>🧭 Itinéraire</h4>
-    <div id="navSummary" style="color:#444; margin-bottom:8px;"></div>
-    <ol id="navSteps"></ol>
-  </div>
-
-  <div id="results"></div>
-
-  <!-- Login modal -->
-  <div class="overlay" id="loginOverlay">
-    <div class="modal">
-      <h3>🔐 Connexion camion</h3>
-      <p>Identifie le camion pour tracer les choix. (MVP : identifiant + PIN)</p>
-
-      <label>Camion (ex: CCF-01)</label>
-      <input id="truckId" placeholder="CCF-01" autocomplete="username" />
-
-      <label>PIN</label>
-      <input id="truckPin" placeholder="••••" type="password" autocomplete="current-password" />
-
-      <div class="row">
-        <button id="loginBtn">Se connecter</button>
-      </div>
-
-      <div id="loginStatus" style="margin-top:10px; color:#b00;"></div>
-    </div>
-  </div>
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
 <script>
-  // =========================
-  // 1) URLs n8n (à adapter)
-  // =========================
-  const N8N_TOP5_URL   = "https://bornepompier.app.n8n.cloud/webhook/top5-bornes";
-  // -> À créer dans n8n: valide camion+PIN et renvoie {ok:true, token:"...", truck_id:"CCF-01"}
-  const N8N_LOGIN_URL  = "https://bornepompier.app.n8n.cloud/webhook/login";
-  // -> Optionnel: enregistrer le choix borne côté serveur
-  const N8N_CHOOSE_URL = "https://bornepompier.app.n8n.cloud/webhook/choose";
 
-  // =========================
-  // 2) State
-  // =========================
-  let map = null;
-  let markersLayer = null;
-  let routingControl = null;
-  let lastUserLatLon = null;
+// 🔥 CONFIG
+const TRUCK_NAME = prompt("Nom du camion ?");
+const WEBHOOK_UPDATE = "https://TON-WEBHOOK-UPDATE.n8n.cloud/webhook/update";
+const WEBHOOK_GET = "https://TON-WEBHOOK-GET.n8n.cloud/webhook/get";
 
-  let session = {
-    token: localStorage.getItem("bp_token") || "",
-    truck_id: localStorage.getItem("bp_truck_id") || ""
-  };
+// 🗺️ Initialisation carte
+const map = L.map('map').setView([47.264, -1.516], 13);
 
-  function setStatus(msg) { document.getElementById("status").innerText = msg || ""; }
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap'
+}).addTo(map);
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, m => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
-    }[m]));
+// 🚒 Icône camion
+const truckIcon = L.icon({
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/1995/1995574.png",
+  iconSize: [40, 40],
+  iconAnchor: [20, 40],
+  popupAnchor: [0, -40]
+});
+
+let myTruckMarker;
+let otherTruckMarkers = {};
+
+// 📍 POSITION TEMPS RÉEL
+navigator.geolocation.watchPosition(position => {
+
+  const lat = position.coords.latitude;
+  const lon = position.coords.longitude;
+
+  map.setView([lat, lon], 15);
+
+  // Mise à jour de MON camion
+  if (myTruckMarker) {
+    myTruckMarker.setLatLng([lat, lon]);
+  } else {
+    myTruckMarker = L.marker([lat, lon], { icon: truckIcon })
+      .addTo(map)
+      .bindPopup("🚒 " + TRUCK_NAME);
   }
 
-  function initMap(centerLat, centerLon) {
-    if (map) map.remove();
-    map = L.map("map").setView([centerLat, centerLon], 14);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: "&copy; OpenStreetMap"
-    }).addTo(map);
-    markersLayer = L.layerGroup().addTo(map);
-  }
+  // 🔄 Envoi position au serveur (n8n → Airtable)
+  fetch(WEBHOOK_UPDATE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: TRUCK_NAME,
+      lat: lat,
+      lon: lon
+    })
+  });
 
-  function fitToMarkers(results) {
-    const latlngs = results.map(r => [r.lat, r.lon]);
-    const bounds = L.latLngBounds(latlngs);
-    map.fitBounds(bounds.pad(0.25));
-  }
+});
 
-  function normalizeResults(data) {
-    if (Array.isArray(data)) return data;
-    if (typeof data === "string") {
-      try { return normalizeResults(JSON.parse(data)); } catch { return []; }
-    }
-    if (data && typeof data === "object" && "results" in data) return normalizeResults(data.results);
-    return [];
-  }
+// 🚚 AFFICHER AUTRES CAMIONS
+function loadOtherTrucks() {
 
-  function showNavPanel(show) {
-    document.getElementById("navPanel").style.display = show ? "block" : "none";
-  }
+  fetch(WEBHOOK_GET)
+    .then(res => res.json())
+    .then(data => {
 
-  function clearRoute() {
-    showNavPanel(false);
-    document.getElementById("navSteps").innerHTML = "";
-    document.getElementById("navSummary").innerText = "";
-    if (routingControl) {
-      try { map.removeControl(routingControl); } catch {}
-      routingControl = null;
-    }
-  }
+      data.forEach(truck => {
 
-  function formatMeters(m) {
-    if (m == null) return "-";
-    if (m < 1000) return `${Math.round(m)} m`;
-    return `${(m/1000).toFixed(1)} km`;
-  }
+        if (truck.name === TRUCK_NAME) return;
 
-  // =========================
-  // 3) Itinéraire DANS LA PAGE (OSRM via Leaflet Routing Machine)
-  // =========================
-  function buildRouteTo(lat, lon) {
-    if (!lastUserLatLon) {
-      alert("Adresse utilisateur non connue. Fais une recherche d’adresse d’abord.");
-      return;
-    }
-    clearRoute();
+        if (otherTruckMarkers[truck.name]) {
+          otherTruckMarkers[truck.name].setLatLng([truck.lat, truck.lon]);
+        } else {
+          otherTruckMarkers[truck.name] = L.marker([truck.lat, truck.lon], {
+            icon: truckIcon
+          })
+          .addTo(map)
+          .bindPopup("🚒 " + truck.name);
+        }
 
-    // OSRM public demo. Pour prod: héberger votre OSRM / Valhalla.
-    routingControl = L.Routing.control({
-      waypoints: [
-        L.latLng(lastUserLatLon.lat, lastUserLatLon.lon),
-        L.latLng(lat, lon),
-      ],
-      router: L.Routing.osrmv1({
-        serviceUrl: "https://router.project-osrm.org/route/v1"
-      }),
-      addWaypoints: false,
-      draggableWaypoints: false,
-      fitSelectedRoutes: true,
-      show: false, // on masque le panel par défaut
-      lineOptions: {
-        styles: [{ opacity: 0.9, weight: 6 }]
-      },
-      createMarker: function(i, wp) {
-        // Marqueurs A/B simples
-        return L.marker(wp.latLng);
-      }
-    }).addTo(map);
+      });
 
-    // Récupère les instructions et les affiche dans notre panneau
-    routingControl.on('routesfound', function(e) {
-      const route = e.routes?.[0];
-      if (!route) return;
-
-      const sum = route.summary || {};
-      document.getElementById("navSummary").innerText =
-        `Distance: ${formatMeters(sum.totalDistance)} — Durée: ${Math.round((sum.totalTime||0)/60)} min`;
-
-      const stepsEl = document.getElementById("navSteps");
-      stepsEl.innerHTML = "";
-
-      // steps: route.instructions / route.legs[].steps (selon version)
-      const legs = route.coordinates ? (route.instructions ? [] : route.legs || []) : (route.legs || []);
-      if (route.instructions && route.instructions.length) {
-        // fallback si instructions flat
-        route.instructions.forEach(ins => {
-          const li = document.createElement("li");
-          li.textContent = ins.text || JSON.stringify(ins);
-          stepsEl.appendChild(li);
-        });
-      } else if (legs.length && legs[0].steps) {
-        legs[0].steps.forEach(step => {
-          const li = document.createElement("li");
-          li.textContent = step.instruction || step.name || "Étape";
-          stepsEl.appendChild(li);
-        });
-      } else {
-        const li = document.createElement("li");
-        li.textContent = "Itinéraire calculé (instructions non disponibles sur cette réponse).";
-        stepsEl.appendChild(li);
-      }
-
-      showNavPanel(true);
     });
 
-    routingControl.on('routingerror', function(err) {
-      console.error(err);
-      alert("Erreur calcul itinéraire. (OSRM public parfois limité).");
-    });
-  }
+}
 
-  // =========================
-  // 4) UI results
-  // =========================
-  function renderResults(results) {
-    const container = document.getElementById("results");
-    container.innerHTML = "";
-    if (!results || results.length === 0) {
-      container.innerHTML = `<div class="item">Aucune borne trouvée.</div>`;
-      return;
-    }
+// 🔄 Rafraîchir toutes les 5 secondes
+setInterval(loadOtherTrucks, 5000);
 
-    results.forEach(r => {
-      // fallback si borne_id absent
-      const borneId = r.borne_id || (r.ref ? String(r.ref) : (r.osm_id ? `OSM-${r.osm_id}` : "BORNE"));
-
-      const iconEmoji = r.type === "underground" ? "🟤" : "🔵";
-
-      const div = document.createElement("div");
-      div.className = "item" + (r.recommended ? " reco" : "");
-
-      div.innerHTML = `
-        <div class="title">${iconEmoji} ${escapeHtml(r.rank)}️⃣ ${escapeHtml(borneId)} ${r.recommended ? "⭐ Recommandée" : ""}</div>
-        <div class="meta">
-          <span class="pill">${escapeHtml(r.distance_m)} m</span>
-          ${r.type ? `<span class="pill">Type: ${escapeHtml(r.type)}</span>` : ``}
-          ${r.position ? `<span class="pill">Pos: ${escapeHtml(r.position)}</span>` : ``}
-          ${r.diameter ? `<span class="pill">Ø: ${escapeHtml(r.diameter)}</span>` : ``}
-          ${r.coupling ? `<span class="pill">Raccord: ${escapeHtml(r.coupling)}</span>` : ``}
-          ${r.debit != null ? `<span class="pill">Débit: ${escapeHtml(r.debit)}</span>` : ``}
-          ${r.etat != null ? `<span class="pill">État: ${escapeHtml(r.etat)}</span>` : ``}
-        </div>
-        <div class="meta">
-          ${r.operator ? `Opérateur: ${escapeHtml(r.operator)}<br>` : ``}
-          ${r.source ? `Source: ${escapeHtml(r.source)}<br>` : ``}
-          <small>OSM: ${escapeHtml(r.osm_id)} ${r.ref ? `— Ref: ${escapeHtml(r.ref)}` : ""}</small>
-        </div>
-        <div class="actions">
-          <button onclick="focusOn(${r.lat}, ${r.lon}, '${escapeHtml(borneId)}')">Voir</button>
-          <button onclick="routeTo(${r.lat}, ${r.lon})">Itinéraire</button>
-          <button onclick="chooseBorne('${escapeHtml(borneId)}', ${r.lat}, ${r.lon}, ${r.osm_id || "null"})">Choisir</button>
-        </div>
-      `;
-
-      container.appendChild(div);
-    });
-  }
-
-  window.focusOn = function(lat, lon, borneId) {
-    if (!map) return;
-    map.setView([lat, lon], 17);
-    setStatus("📍 " + borneId);
-  };
-
-  window.routeTo = function(lat, lon) {
-    buildRouteTo(lat, lon);
-  };
-
-  window.chooseBorne = async function(borneId, lat, lon, osm_id) {
-    alert("✅ Borne choisie : " + borneId);
-
-    // Optionnel: log côté serveur
-    if (!N8N_CHOOSE_URL || N8N_CHOOSE_URL.includes("PASTE_")) return;
-
-    try {
-      await fetch(N8N_CHOOSE_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
-        },
-        body: JSON.stringify({
-          truck_id: session.truck_id,
-          borne_id: borneId,
-          lat, lon,
-          osm_id
-        })
-      });
-    } catch (e) {
-      console.warn("choose webhook failed", e);
-    }
-  };
-
-  // =========================
-  // 5) Search → Top5
-  // =========================
-  async function search() {
-    const address = document.getElementById("address").value.trim();
-    if (!address) { setStatus("⚠️ Entre une adresse."); return; }
-
-    setStatus("⏳ Recherche en cours…");
-    document.getElementById("btnSearch").disabled = true;
-
-    try {
-      const res = await fetch(N8N_TOP5_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
-        },
-        body: JSON.stringify({ address, truck_id: session.truck_id })
-      });
-
-      const rawText = await res.text();
-      if (!res.ok) throw new Error("Webhook HTTP " + res.status + "\n" + rawText);
-
-      let data;
-      try { data = JSON.parse(rawText); } catch { data = rawText; }
-
-      const results = normalizeResults(data);
-
-      // mémorise le point utilisateur (pour l'itinéraire)
-      // -> on prend le 1er item "Extract LatLon" côté serveur, mais ici on ne l'a pas.
-      // Solution: ton n8n top5 peut renvoyer user_lat/user_lon dans la réponse.
-      // Pour MVP: on déduit l'origine via Nominatim côté client aussi.
-      // Ici on fait un geocode client simple pour l'itinéraire (sans stockage).
-      // (Si tu veux, je te fais la variante "n8n renvoie user_lat/user_lon".)
-      await geocodeClientForOrigin(address);
-
-      if (!results.length) {
-        setStatus("Aucune borne trouvée.\n\nDebug réponse brute :\n" + rawText);
-        renderResults([]);
-        return;
-      }
-
-      initMap(results[0].lat, results[0].lon);
-      markersLayer.clearLayers();
-      clearRoute();
-
-      results.forEach(r => {
-        const borneId = r.borne_id || (r.ref ? String(r.ref) : (r.osm_id ? `OSM-${r.osm_id}` : "BORNE"));
-        const popup =
-          `<b>${escapeHtml(borneId)}</b>` +
-          `<br>${escapeHtml(r.distance_m)} m` +
-          (r.type ? `<br>Type: ${escapeHtml(r.type)}` : ``) +
-          (r.position ? `<br>Position: ${escapeHtml(r.position)}` : ``) +
-          (r.diameter ? `<br>Diamètre: ${escapeHtml(r.diameter)}` : ``) +
-          (r.coupling ? `<br>Raccord: ${escapeHtml(r.coupling)}` : ``) +
-          (r.operator ? `<br>Opérateur: ${escapeHtml(r.operator)}` : ``) +
-          (r.source ? `<br>Source: ${escapeHtml(r.source)}` : ``) +
-          `<br><small>OSM: ${escapeHtml(r.osm_id)} ${r.ref ? `— Ref: ${escapeHtml(r.ref)}` : ""}</small>` +
-          `<br><button onclick="routeTo(${r.lat}, ${r.lon})">Itinéraire</button>` +
-          `<br><button onclick="chooseBorne('${escapeHtml(borneId)}', ${r.lat}, ${r.lon}, ${r.osm_id || "null"})">Choisir</button>`;
-
-        const marker = L.marker([r.lat, r.lon]).addTo(markersLayer).bindPopup(popup);
-        if (r.recommended) marker.openPopup();
-      });
-
-      fitToMarkers(results);
-      renderResults(results);
-      setStatus("✅ Top 5 affiché. (" + results.length + " résultats)");
-    } catch (e) {
-      setStatus("❌ " + (e?.message || e));
-    } finally {
-      document.getElementById("btnSearch").disabled = false;
-    }
-  }
-
-  // Geocode client (uniquement pour l'origine itinéraire)
-  async function geocodeClientForOrigin(address) {
-    try {
-      const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&q=" + encodeURIComponent(address);
-      const res = await fetch(url, {
-        headers: { "Accept": "application/json", "User-Agent": "bornepompier/1.0" }
-      });
-      const arr = await res.json();
-      if (!arr?.[0]) return;
-      lastUserLatLon = { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
-    } catch {}
-  }
-
-  // =========================
-  // 6) Login
-  // =========================
-  function showLogin(force) {
-    const overlay = document.getElementById("loginOverlay");
-    overlay.style.display = "flex";
-    document.getElementById("loginStatus").innerText = "";
-    if (force) {
-      document.getElementById("truckId").value = "";
-      document.getElementById("truckPin").value = "";
-    }
-  }
-
-  function hideLogin() {
-    document.getElementById("loginOverlay").style.display = "none";
-  }
-
-  function updateTruckUI() {
-    const badge = document.getElementById("truckBadge");
-    const logoutBtn = document.getElementById("logoutBtn");
-    if (session.truck_id) {
-      badge.style.display = "inline-flex";
-      badge.innerHTML = `🚚 Camion: <b>${escapeHtml(session.truck_id)}</b>`;
-      logoutBtn.style.display = "inline-block";
-    } else {
-      badge.style.display = "none";
-      logoutBtn.style.display = "none";
-    }
-  }
-
-  async function doLogin() {
-    const truck_id = document.getElementById("truckId").value.trim();
-    const pin = document.getElementById("truckPin").value.trim();
-    const statusEl = document.getElementById("loginStatus");
-
-    if (!truck_id || !pin) {
-      statusEl.innerText = "Entre camion + PIN.";
-      return;
-    }
-    if (!N8N_LOGIN_URL || N8N_LOGIN_URL.includes("PASTE_")) {
-      statusEl.innerText = "Ajoute l’URL n8n de login dans le fichier (N8N_LOGIN_URL).";
-      return;
-    }
-
-    statusEl.style.color = "#444";
-    statusEl.innerText = "Connexion…";
-
-    try {
-      const res = await fetch(N8N_LOGIN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ truck_id, pin })
-      });
-      const text = await res.text();
-      if (!res.ok) throw new Error(text || ("HTTP " + res.status));
-      let data; try { data = JSON.parse(text); } catch { data = {}; }
-
-      if (!data.ok) {
-        statusEl.style.color = "#b00";
-        statusEl.innerText = data.message || "Identifiants invalides.";
-        return;
-      }
-
-      session = { truck_id: data.truck_id || truck_id, token: data.token || "" };
-      localStorage.setItem("bp_truck_id", session.truck_id);
-      localStorage.setItem("bp_token", session.token);
-
-      hideLogin();
-      updateTruckUI();
-      setStatus("✅ Connecté: " + session.truck_id);
-    } catch (e) {
-      statusEl.style.color = "#b00";
-      statusEl.innerText = "Erreur login: " + (e?.message || e);
-    }
-  }
-
-  function logout() {
-    localStorage.removeItem("bp_truck_id");
-    localStorage.removeItem("bp_token");
-    session = { truck_id:"", token:"" };
-    updateTruckUI();
-    showLogin(true);
-  }
-
-  // =========================
-  // 7) Init
-  // =========================
-  document.getElementById("btnSearch").addEventListener("click", search);
-  document.getElementById("address").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
-  document.getElementById("loginBtn").addEventListener("click", doLogin);
-  document.getElementById("logoutBtn").addEventListener("click", logout);
-
-  initMap(48.8566, 2.3522);
-  updateTruckUI();
-
-  // force login if no truck_id
-  if (!session.truck_id) showLogin(false);
-  else setStatus("Connecté: " + session.truck_id + "\nEntre une adresse puis clique sur Rechercher.");
 </script>
+
 </body>
 </html>
