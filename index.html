@@ -1,112 +1,576 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Carte Camions Pompier</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BornePompier — Top 5 + Itinéraire + Login + Camions</title>
 
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <!-- Leaflet Routing Machine (OSRM) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css">
+  <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
 
   <style>
-    body { margin:0; }
+    body { margin:0; font-family: Arial, sans-serif; }
     #map { height:100vh; width:100%; }
+
+    #uiPanel{
+      position:absolute; top:12px; left:12px;
+      z-index:1200;
+      width:min(760px, calc(100% - 24px));
+      background:#fff;
+      border-radius:14px;
+      padding:14px;
+      box-shadow:0 12px 32px rgba(0,0,0,.18);
+    }
+
+    #topbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    #logoutBtn { margin-left:auto; }
+
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    input { padding:10px; width:min(560px, 100%); font-size:16px; }
+    button { padding:10px 14px; font-size:16px; cursor:pointer; }
+
+    #status { margin-top:10px; color:#444; white-space:pre-wrap; }
+    #miniStatus { margin-top:6px; font-size:12px; color:#666; }
+
+    #results { margin-top: 14px; border: 1px solid #eee; border-radius: 10px; overflow:hidden; background:#fff; }
+    .item { padding: 12px; border-bottom: 1px solid #f0f0f0; }
+    .item:last-child { border-bottom:none; }
+    .item.reco { background: #f1fff1; }
+    .title { font-weight: 700; }
+    .meta { margin-top:6px; color:#555; font-size:14px; line-height:1.35; }
+    .actions { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; color:#444; margin-right:6px; }
+
+    #navPanel { margin-top: 12px; border:1px solid #eee; border-radius: 10px; padding: 10px; background:#fff; }
+    #navPanel h4 { margin: 0 0 8px 0; }
+    #navPanel ol { margin: 0; padding-left: 20px; }
+
+    .badge { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid #eee; border-radius:999px; background:#fafafa; }
+
+    /* Login modal */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index: 9999; }
+    .modal { background:#fff; width:min(520px, 92vw); border-radius: 14px; padding: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+    .modal h3 { margin: 0 0 10px 0; }
+    .modal p { margin: 6px 0 12px 0; color:#444; }
+    .modal label { display:block; font-size: 13px; color:#333; margin-top:10px; }
+    .modal input { width: 100%; box-sizing:border-box; }
+    .modal .row { justify-content:flex-end; margin-top:12px; }
   </style>
 </head>
+
 <body>
+  <div id="map"></div>
 
-<div id="map"></div>
+  <div id="uiPanel">
+    <div id="topbar">
+      <h2 style="margin:0;">🚒 BornePompier</h2>
+      <div class="badge" id="truckBadge" style="display:none;"></div>
+      <button id="logoutBtn" style="display:none;">Déconnexion</button>
+    </div>
 
-<!-- Leaflet JS -->
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <p style="margin:8px 0 0; color:#444;">
+      Adresse intervention → Top 5 bornes → itinéraire (dans la page) + camions temps réel.
+    </p>
+
+    <div class="row" style="margin-top:10px;">
+      <input id="address" placeholder="Adresse intervention (ex: 18 rue Jeanne la Corsaire, Nantes)" />
+      <button id="btnSearch">Rechercher</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="miniStatus"></div>
+
+    <div id="navPanel" style="display:none;">
+      <h4>🧭 Itinéraire</h4>
+      <div id="navSummary" style="color:#444; margin-bottom:8px;"></div>
+      <ol id="navSteps"></ol>
+    </div>
+
+    <div id="results"></div>
+  </div>
+
+  <!-- Login modal -->
+  <div class="overlay" id="loginOverlay">
+    <div class="modal">
+      <h3>🔐 Connexion camion</h3>
+      <p>Identifie le camion pour tracer les choix. (MVP : identifiant + PIN)</p>
+
+      <label>Camion (ex: CCF-01)</label>
+      <input id="truckId" placeholder="CCF-01" autocomplete="username" />
+
+      <label>PIN</label>
+      <input id="truckPin" placeholder="••••" type="password" autocomplete="current-password" />
+
+      <div class="row">
+        <button id="loginBtn">Se connecter</button>
+      </div>
+
+      <div id="loginStatus" style="margin-top:10px; color:#b00;"></div>
+    </div>
+  </div>
 
 <script>
+  // =========================
+  // 1) URLs n8n (bornes + login)
+  // =========================
+  const N8N_TOP5_URL   = "https://bornepompier.app.n8n.cloud/webhook/top5-bornes";
+  const N8N_LOGIN_URL  = "https://bornepompier.app.n8n.cloud/webhook/login";
+  const N8N_CHOOSE_URL = "https://bornepompier.app.n8n.cloud/webhook/choose";
 
-// 🔥 CONFIG
-const TRUCK_NAME = prompt("Nom du camion ?");
-const WEBHOOK_UPDATE = "https://TON-WEBHOOK-UPDATE.n8n.cloud/webhook/update";
-const WEBHOOK_GET = "https://TON-WEBHOOK-GET.n8n.cloud/webhook/get";
+  // =========================
+  // 2) URLs n8n (camions)
+  // =========================
+  const N8N_TRUCKS_UPDATE_URL = "https://bornepompier.app.n8n.cloud/webhook/trucks-update";
+  const N8N_TRUCKS_GET_URL    = "PASTE_TRUCKS_GET_WEBHOOK"; // -> à créer ensuite (GET /trucks-get)
 
-// 🗺️ Initialisation carte
-const map = L.map('map').setView([47.264, -1.516], 13);
+  // =========================
+  // State
+  // =========================
+  let map = null;
+  let markersLayer = null;
+  let routingControl = null;
+  let lastUserLatLon = null;
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap'
-}).addTo(map);
+  // Camions
+  let myTruckMarker = null;
+  const otherTruckMarkers = {};
+  let centeredOnce = false;
 
-// 🚒 Icône camion
-const truckIcon = L.icon({
-  iconUrl: "https://cdn-icons-png.flaticon.com/512/1995/1995574.png",
-  iconSize: [40, 40],
-  iconAnchor: [20, 40],
-  popupAnchor: [0, -40]
-});
+  let session = {
+    token: localStorage.getItem("bp_token") || "",
+    truck_id: localStorage.getItem("bp_truck_id") || ""
+  };
 
-let myTruckMarker;
-let otherTruckMarkers = {};
+  function setStatus(msg) { document.getElementById("status").innerText = msg || ""; }
+  function setMini(msg) { document.getElementById("miniStatus").innerText = msg || ""; }
 
-// 📍 POSITION TEMPS RÉEL
-navigator.geolocation.watchPosition(position => {
-
-  const lat = position.coords.latitude;
-  const lon = position.coords.longitude;
-
-  map.setView([lat, lon], 15);
-
-  // Mise à jour de MON camion
-  if (myTruckMarker) {
-    myTruckMarker.setLatLng([lat, lon]);
-  } else {
-    myTruckMarker = L.marker([lat, lon], { icon: truckIcon })
-      .addTo(map)
-      .bindPopup("🚒 " + TRUCK_NAME);
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
   }
 
-  // 🔄 Envoi position au serveur (n8n → Airtable)
-  fetch(WEBHOOK_UPDATE, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: TRUCK_NAME,
-      lat: lat,
-      lon: lon
-    })
+  // =========================
+  // Icônes
+  // =========================
+  // Recommandé: mettre ton PNG dans /images/fire-truck.png
+  const FIRE_TRUCK_ICON_URL = "images/fire-truck.png";
+
+  const truckIcon = L.icon({
+    iconUrl: FIRE_TRUCK_ICON_URL,
+    iconSize: [46, 46],
+    iconAnchor: [23, 46],
+    popupAnchor: [0, -42]
   });
 
-});
+  const hydrantIcon = L.divIcon({
+    className: "",
+    html: "🧯",
+    iconSize: [18, 18],
+    iconAnchor: [9, 9]
+  });
 
-// 🚚 AFFICHER AUTRES CAMIONS
-function loadOtherTrucks() {
+  // =========================
+  // Map init
+  // =========================
+  function initMap(centerLat, centerLon) {
+    if (map) map.remove();
+    map = L.map("map").setView([centerLat, centerLon], 14);
 
-  fetch(WEBHOOK_GET)
-    .then(res => res.json())
-    .then(data => {
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
 
-      data.forEach(truck => {
+    markersLayer = L.layerGroup().addTo(map);
+  }
 
-        if (truck.name === TRUCK_NAME) return;
+  function fitToMarkers(results) {
+    const latlngs = results.map(r => [r.lat, r.lon]);
+    const bounds = L.latLngBounds(latlngs);
+    map.fitBounds(bounds.pad(0.25));
+  }
 
-        if (otherTruckMarkers[truck.name]) {
-          otherTruckMarkers[truck.name].setLatLng([truck.lat, truck.lon]);
-        } else {
-          otherTruckMarkers[truck.name] = L.marker([truck.lat, truck.lon], {
-            icon: truckIcon
-          })
-          .addTo(map)
-          .bindPopup("🚒 " + truck.name);
-        }
+  function normalizeResults(data) {
+    if (Array.isArray(data)) return data;
+    if (typeof data === "string") {
+      try { return normalizeResults(JSON.parse(data)); } catch { return []; }
+    }
+    if (data && typeof data === "object" && "results" in data) return normalizeResults(data.results);
+    return [];
+  }
 
-      });
+  function showNavPanel(show) {
+    document.getElementById("navPanel").style.display = show ? "block" : "none";
+  }
 
+  function clearRoute() {
+    showNavPanel(false);
+    document.getElementById("navSteps").innerHTML = "";
+    document.getElementById("navSummary").innerText = "";
+    if (routingControl) {
+      try { map.removeControl(routingControl); } catch {}
+      routingControl = null;
+    }
+  }
+
+  function formatMeters(m) {
+    if (m == null) return "-";
+    if (m < 1000) return `${Math.round(m)} m`;
+    return `${(m/1000).toFixed(1)} km`;
+  }
+
+  // =========================
+  // Itinéraire (OSRM)
+  // =========================
+  function buildRouteTo(lat, lon) {
+    if (!lastUserLatLon) {
+      alert("Adresse utilisateur non connue. Fais une recherche d’adresse d’abord.");
+      return;
+    }
+    clearRoute();
+
+    routingControl = L.Routing.control({
+      waypoints: [
+        L.latLng(lastUserLatLon.lat, lastUserLatLon.lon),
+        L.latLng(lat, lon),
+      ],
+      router: L.Routing.osrmv1({ serviceUrl: "https://router.project-osrm.org/route/v1" }),
+      addWaypoints: false,
+      draggableWaypoints: false,
+      fitSelectedRoutes: true,
+      show: false,
+      lineOptions: { styles: [{ opacity: 0.9, weight: 6 }] },
+      createMarker: function(i, wp) { return L.marker(wp.latLng); }
+    }).addTo(map);
+
+    routingControl.on('routesfound', function(e) {
+      const route = e.routes?.[0];
+      if (!route) return;
+
+      const sum = route.summary || {};
+      document.getElementById("navSummary").innerText =
+        `Distance: ${formatMeters(sum.totalDistance)} — Durée: ${Math.round((sum.totalTime||0)/60)} min`;
+
+      const stepsEl = document.getElementById("navSteps");
+      stepsEl.innerHTML = "";
+      const legs = route.legs || [];
+      if (legs.length && legs[0].steps) {
+        legs[0].steps.forEach(step => {
+          const li = document.createElement("li");
+          li.textContent = step.instruction || step.name || "Étape";
+          stepsEl.appendChild(li);
+        });
+      } else {
+        const li = document.createElement("li");
+        li.textContent = "Itinéraire calculé.";
+        stepsEl.appendChild(li);
+      }
+      showNavPanel(true);
     });
 
-}
+    routingControl.on('routingerror', function(err) {
+      console.error(err);
+      alert("Erreur calcul itinéraire. (OSRM public parfois limité).");
+    });
+  }
 
-// 🔄 Rafraîchir toutes les 5 secondes
-setInterval(loadOtherTrucks, 5000);
+  // =========================
+  // UI results (bornes)
+  // =========================
+  function renderResults(results) {
+    const container = document.getElementById("results");
+    container.innerHTML = "";
+    if (!results || results.length === 0) {
+      container.innerHTML = `<div class="item">Aucune borne trouvée.</div>`;
+      return;
+    }
 
+    results.forEach(r => {
+      const borneId = r.borne_id || (r.ref ? String(r.ref) : (r.osm_id ? `OSM-${r.osm_id}` : "BORNE"));
+      const div = document.createElement("div");
+      div.className = "item" + (r.recommended ? " reco" : "");
+
+      div.innerHTML = `
+        <div class="title">🧯 ${escapeHtml(r.rank)}️⃣ ${escapeHtml(borneId)} ${r.recommended ? "⭐ Recommandée" : ""}</div>
+        <div class="meta">
+          <span class="pill">${escapeHtml(r.distance_m)} m</span>
+          ${r.type ? `<span class="pill">Type: ${escapeHtml(r.type)}</span>` : ``}
+          ${r.position ? `<span class="pill">Pos: ${escapeHtml(r.position)}</span>` : ``}
+          ${r.diameter ? `<span class="pill">Ø: ${escapeHtml(r.diameter)}</span>` : ``}
+          ${r.coupling ? `<span class="pill">Raccord: ${escapeHtml(r.coupling)}</span>` : ``}
+        </div>
+        <div class="meta">
+          ${r.operator ? `Opérateur: ${escapeHtml(r.operator)}<br>` : ``}
+          ${r.source ? `Source: ${escapeHtml(r.source)}<br>` : ``}
+          <small>OSM: ${escapeHtml(r.osm_id)} ${r.ref ? `— Ref: ${escapeHtml(r.ref)}` : ""}</small>
+        </div>
+        <div class="actions">
+          <button onclick="focusOn(${r.lat}, ${r.lon}, '${escapeHtml(borneId)}')">Voir</button>
+          <button onclick="routeTo(${r.lat}, ${r.lon})">Itinéraire</button>
+          <button onclick="chooseBorne('${escapeHtml(borneId)}', ${r.lat}, ${r.lon}, ${r.osm_id || "null"})">Choisir</button>
+        </div>
+      `;
+      container.appendChild(div);
+    });
+  }
+
+  window.focusOn = function(lat, lon, borneId) {
+    if (!map) return;
+    map.setView([lat, lon], 17);
+    setStatus("📍 " + borneId);
+  };
+  window.routeTo = function(lat, lon) { buildRouteTo(lat, lon); };
+
+  window.chooseBorne = async function(borneId, lat, lon, osm_id) {
+    alert("✅ Borne choisie : " + borneId);
+
+    if (!N8N_CHOOSE_URL) return;
+    try {
+      await fetch(N8N_CHOOSE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
+        },
+        body: JSON.stringify({ truck_id: session.truck_id, borne_id: borneId, lat, lon, osm_id })
+      });
+    } catch (e) {
+      console.warn("choose webhook failed", e);
+    }
+  };
+
+  // =========================
+  // Search → Top5 (bornes)
+  // =========================
+  async function search() {
+    const address = document.getElementById("address").value.trim();
+    if (!address) { setStatus("⚠️ Entre une adresse."); return; }
+
+    setStatus("⏳ Recherche en cours…");
+    document.getElementById("btnSearch").disabled = true;
+
+    try {
+      const res = await fetch(N8N_TOP5_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
+        },
+        body: JSON.stringify({ address, truck_id: session.truck_id })
+      });
+
+      const rawText = await res.text();
+      if (!res.ok) throw new Error("Webhook HTTP " + res.status + "\n" + rawText);
+
+      let data;
+      try { data = JSON.parse(rawText); } catch { data = rawText; }
+
+      const results = normalizeResults(data);
+
+      // origine itinéraire
+      await geocodeClientForOrigin(address);
+
+      markersLayer.clearLayers();
+      clearRoute();
+
+      if (!results.length) {
+        setStatus("Aucune borne trouvée.\n\nDebug réponse brute :\n" + rawText);
+        renderResults([]);
+        return;
+      }
+
+      results.forEach(r => {
+        const borneId = r.borne_id || (r.ref ? String(r.ref) : (r.osm_id ? `OSM-${r.osm_id}` : "BORNE"));
+        const popup =
+          `<b>🧯 ${escapeHtml(borneId)}</b>` +
+          `<br>${escapeHtml(r.distance_m)} m` +
+          `<br><button onclick="routeTo(${r.lat}, ${r.lon})">Itinéraire</button>` +
+          `<br><button onclick="chooseBorne('${escapeHtml(borneId)}', ${r.lat}, ${r.lon}, ${r.osm_id || "null"})">Choisir</button>`;
+
+        const marker = L.marker([r.lat, r.lon], { icon: hydrantIcon }).addTo(markersLayer).bindPopup(popup);
+        if (r.recommended) marker.openPopup();
+      });
+
+      fitToMarkers(results);
+      renderResults(results);
+      setStatus("✅ Top 5 affiché. (" + results.length + " résultats)");
+    } catch (e) {
+      setStatus("❌ " + (e?.message || e));
+    } finally {
+      document.getElementById("btnSearch").disabled = false;
+    }
+  }
+
+  async function geocodeClientForOrigin(address) {
+    try {
+      const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=" + encodeURIComponent(address);
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      const arr = await res.json();
+      if (!arr?.[0]) return;
+      lastUserLatLon = { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
+    } catch {}
+  }
+
+  // =========================
+  // Login
+  // =========================
+  function showLogin(force) {
+    const overlay = document.getElementById("loginOverlay");
+    overlay.style.display = "flex";
+    document.getElementById("loginStatus").innerText = "";
+    if (force) {
+      document.getElementById("truckId").value = "";
+      document.getElementById("truckPin").value = "";
+    }
+  }
+  function hideLogin() { document.getElementById("loginOverlay").style.display = "none"; }
+
+  function updateTruckUI() {
+    const badge = document.getElementById("truckBadge");
+    const logoutBtn = document.getElementById("logoutBtn");
+    if (session.truck_id) {
+      badge.style.display = "inline-flex";
+      badge.innerHTML = `🚒 Camion: <b>${escapeHtml(session.truck_id)}</b>`;
+      logoutBtn.style.display = "inline-block";
+    } else {
+      badge.style.display = "none";
+      logoutBtn.style.display = "none";
+    }
+  }
+
+  async function doLogin() {
+    const truck_id = document.getElementById("truckId").value.trim();
+    const pin = document.getElementById("truckPin").value.trim();
+    const statusEl = document.getElementById("loginStatus");
+
+    if (!truck_id || !pin) { statusEl.innerText = "Entre camion + PIN."; return; }
+
+    statusEl.style.color = "#444";
+    statusEl.innerText = "Connexion…";
+
+    try {
+      const res = await fetch(N8N_LOGIN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ truck_id, pin })
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || ("HTTP " + res.status));
+      let data; try { data = JSON.parse(text); } catch { data = {}; }
+
+      if (!data.ok) {
+        statusEl.style.color = "#b00";
+        statusEl.innerText = data.message || "Identifiants invalides.";
+        return;
+      }
+
+      session = { truck_id: data.truck_id || truck_id, token: data.token || "" };
+      localStorage.setItem("bp_truck_id", session.truck_id);
+      localStorage.setItem("bp_token", session.token);
+
+      hideLogin();
+      updateTruckUI();
+      setStatus("✅ Connecté: " + session.truck_id);
+    } catch (e) {
+      statusEl.style.color = "#b00";
+      statusEl.innerText = "Erreur login: " + (e?.message || e);
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem("bp_truck_id");
+    localStorage.removeItem("bp_token");
+    session = { truck_id:"", token:"" };
+    updateTruckUI();
+    showLogin(true);
+  }
+
+  // =========================
+  // Camion GPS + autres camions
+  // =========================
+  function startTruckTracking() {
+    if (!navigator.geolocation) {
+      setMini("GPS non supporté.");
+      return;
+    }
+
+    navigator.geolocation.watchPosition(async (pos) => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+
+      // Mon camion
+      if (!myTruckMarker) {
+        myTruckMarker = L.marker([lat, lon], { icon: truckIcon })
+          .addTo(map)
+          .bindPopup("🚒 " + (session.truck_id || "Camion"));
+      } else {
+        myTruckMarker.setLatLng([lat, lon]);
+      }
+
+      // Centre une fois
+      if (!centeredOnce) {
+        map.setView([lat, lon], 15);
+        centeredOnce = true;
+      }
+
+      // Envoi position
+      if (session.truck_id) {
+        fetch(N8N_TRUCKS_UPDATE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: session.truck_id, lat, lon })
+        }).catch(() => {});
+      }
+
+      setMini(`GPS OK • ${session.truck_id || "non connecté"} • lat ${lat.toFixed(5)} lon ${lon.toFixed(5)}`);
+    }, (err) => {
+      setMini("GPS bloqué/refusé: " + err.message);
+    }, { enableHighAccuracy: true });
+  }
+
+  async function loadOtherTrucks() {
+    if (!N8N_TRUCKS_GET_URL || N8N_TRUCKS_GET_URL.includes("PASTE_")) return;
+
+    try {
+      const res = await fetch(N8N_TRUCKS_GET_URL);
+      const data = await res.json();
+
+      (data || []).forEach(t => {
+        if (!t?.name || t.lat == null || t.lon == null) return;
+        if (t.name === session.truck_id) return;
+
+        if (!otherTruckMarkers[t.name]) {
+          otherTruckMarkers[t.name] = L.marker([t.lat, t.lon], { icon: truckIcon })
+            .addTo(map)
+            .bindPopup("🚒 " + t.name);
+        } else {
+          otherTruckMarkers[t.name].setLatLng([t.lat, t.lon]);
+        }
+      });
+    } catch {}
+  }
+
+  // =========================
+  // Init
+  // =========================
+  document.getElementById("btnSearch").addEventListener("click", search);
+  document.getElementById("address").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
+  document.getElementById("loginBtn").addEventListener("click", doLogin);
+  document.getElementById("logoutBtn").addEventListener("click", logout);
+
+  initMap(48.8566, 2.3522);
+  updateTruckUI();
+
+  if (!session.truck_id) showLogin(false);
+  else setStatus("Connecté: " + session.truck_id + "\nEntre une adresse puis clique sur Rechercher.");
+
+  startTruckTracking();
+  setInterval(loadOtherTrucks, 5000);
 </script>
-
 </body>
 </html>
