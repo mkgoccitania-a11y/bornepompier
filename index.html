@@ -19,11 +19,13 @@
     #uiPanel{
       position:absolute; top:12px; left:12px;
       z-index:1200;
-      width:min(820px, calc(100% - 24px));
+      width:min(900px, calc(100% - 24px));
       background:#fff;
       border-radius:14px;
       padding:14px;
       box-shadow:0 12px 32px rgba(0,0,0,.18);
+      max-height: calc(100vh - 24px);
+      overflow:auto;
     }
 
     #topbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
@@ -50,6 +52,16 @@
     #navPanel ol { margin: 0; padding-left: 20px; }
 
     .badge { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid #eee; border-radius:999px; background:#fafafa; }
+
+    /* Intervention panel */
+    #interventionPanel{
+      display:none;
+      margin-top:10px;
+      padding:10px;
+      border:1px solid #ddd;
+      border-radius:10px;
+      background:#fff;
+    }
 
     /* Login modal */
     .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index: 9999; }
@@ -78,7 +90,7 @@
     </div>
 
     <p style="margin:8px 0 0; color:#444;">
-      Adresse intervention → Top 5 bornes → itinéraire (dans la page) + camions (sur demande).
+      Adresse intervention → Top 5 bornes → itinéraire (auto au choix) + intervention active + camions (sur demande).
     </p>
 
     <div class="row" style="margin-top:10px;">
@@ -88,6 +100,14 @@
 
     <div id="status"></div>
     <div id="miniStatus"></div>
+
+    <div id="interventionPanel">
+      <h4 style="margin:0 0 8px;">🚨 Intervention active</h4>
+      <div id="interventionInfo" style="color:#444;"></div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnEndIntervention">Terminer l’intervention</button>
+      </div>
+    </div>
 
     <div id="navPanel" style="display:none;">
       <h4>🧭 Itinéraire</h4>
@@ -143,7 +163,6 @@
   // Camions
   let myTruckMarker = null;
   const truckMarkers = {}; // {truckName: marker}
-  let lastTrucksPayload = []; // mémorise dernier GET
 
   let session = {
     token: localStorage.getItem("bp_token") || "",
@@ -160,7 +179,7 @@
   }
 
   // =========================
-  // Icône camion (URL directe)
+  // Icônes
   // =========================
   const FIRE_TRUCK_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4325/4325959.png";
 
@@ -177,6 +196,46 @@
     iconSize: [18, 18],
     iconAnchor: [9, 9]
   });
+
+  const selectedHydrantIcon = L.divIcon({
+    className: "",
+    html: "🔴",
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
+  });
+
+  // =========================
+  // Intervention state
+  // =========================
+  let activeIntervention = null;
+  let selectedHydrantMarker = null;
+
+  function showActiveInterventionPanel() {
+    const panel = document.getElementById("interventionPanel");
+    const info = document.getElementById("interventionInfo");
+    if (!activeIntervention) return;
+
+    info.innerHTML = `
+      <b>Borne :</b> ${escapeHtml(activeIntervention.borneId)}<br>
+      <b>Camion :</b> ${escapeHtml(session.truck_id || "-")}<br>
+      <b>Début :</b> ${new Date(activeIntervention.startedAt).toLocaleTimeString()}
+    `;
+
+    panel.style.display = "block";
+  }
+
+  function endIntervention() {
+    activeIntervention = null;
+    document.getElementById("interventionPanel").style.display = "none";
+
+    // Remet l’icône précédente si existante
+    if (selectedHydrantMarker) {
+      selectedHydrantMarker.setIcon(hydrantIcon);
+    }
+
+    clearRoute();
+    setMini("✅ Intervention terminée.");
+  }
 
   // =========================
   // Map init
@@ -319,10 +378,36 @@
   };
   window.routeTo = function(lat, lon) { buildRouteTo(lat, lon); };
 
+  // ✅ Choisir = itinéraire auto + borne rouge + panneau + log Airtable
   window.chooseBorne = async function(borneId, lat, lon, osm_id) {
-    alert("✅ Borne choisie : " + borneId);
 
-    if (!N8N_CHOOSE_URL) return;
+    // si on avait déjà un marker sélectionné rouge, on remet en normal
+    if (selectedHydrantMarker) {
+      selectedHydrantMarker.setIcon(hydrantIcon);
+    }
+
+    // intervention active en mémoire
+    activeIntervention = {
+      borneId,
+      lat,
+      lon,
+      osm_id,
+      startedAt: new Date().toISOString()
+    };
+
+    // lance itinéraire automatiquement
+    buildRouteTo(lat, lon);
+
+    // borne rouge si on a capturé le marker cliqué
+    if (selectedHydrantMarker) {
+      selectedHydrantMarker.setIcon(selectedHydrantIcon);
+    }
+
+    // panneau intervention
+    showActiveInterventionPanel();
+    setMini(`🚨 Intervention lancée sur ${borneId}`);
+
+    // log serveur
     try {
       await fetch(N8N_CHOOSE_URL, {
         method: "POST",
@@ -330,10 +415,17 @@
           "Content-Type": "application/json",
           ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
         },
-        body: JSON.stringify({ truck_id: session.truck_id, borne_id: borneId, lat, lon, osm_id })
+        body: JSON.stringify({
+          truck_id: session.truck_id,
+          borne_id: borneId,
+          lat,
+          lon,
+          osm_id
+        })
       });
     } catch (e) {
       console.warn("choose webhook failed", e);
+      setMini("⚠️ Intervention affichée, mais log serveur en erreur (voir console).");
     }
   };
 
@@ -369,6 +461,9 @@
       markersLayer.clearLayers();
       clearRoute();
 
+      // reset sélection marker hydrant
+      selectedHydrantMarker = null;
+
       if (!results.length) {
         setStatus("Aucune borne trouvée.\n\nDebug réponse brute :\n" + rawText);
         renderResults([]);
@@ -383,7 +478,15 @@
           `<br><button onclick="routeTo(${r.lat}, ${r.lon})">Itinéraire</button>` +
           `<br><button onclick="chooseBorne('${escapeHtml(borneId)}', ${r.lat}, ${r.lon}, ${r.osm_id || "null"})">Choisir</button>`;
 
-        const marker = L.marker([r.lat, r.lon], { icon: hydrantIcon }).addTo(markersLayer).bindPopup(popup);
+        const marker = L.marker([r.lat, r.lon], { icon: hydrantIcon })
+          .addTo(markersLayer)
+          .bindPopup(popup);
+
+        // ⚠️ clé: mémoriser le marker cliqué, pour pouvoir le passer en rouge au "Choisir"
+        marker.on("click", () => {
+          selectedHydrantMarker = marker;
+        });
+
         if (r.recommended) marker.openPopup();
       });
 
@@ -480,7 +583,7 @@
   }
 
   // =========================
-  // Camion GPS (envoi update) + bouton GET
+  // Camion GPS (update) + Camions (get)
   // =========================
   function startTruckTracking() {
     if (!navigator.geolocation) {
@@ -525,26 +628,23 @@
     setMini("📡 Appel trucks-get…");
 
     try {
-      const res = await fetch(N8N_TRUCKS_GET_URL, { cache: "no-store" });
+      const res = await fetch(N8N_TRUCKS_GET_URL, { cache:"no-store" });
       const text = await res.text();
       if (!res.ok) throw new Error("HTTP " + res.status + " — " + text);
 
       let data;
       try { data = JSON.parse(text); } catch { data = []; }
-
       if (!Array.isArray(data)) data = [];
 
-      lastTrucksPayload = data;
+      const seen = new Set();
 
-      // 1) Création / update marqueurs
-      const seenNames = new Set();
       for (const t of data) {
         const name = t?.name || t?.truck_id;
         const lat = t?.lat;
         const lon = t?.lon;
-
         if (!name || lat == null || lon == null) continue;
-        seenNames.add(name);
+
+        seen.add(name);
 
         if (!truckMarkers[name]) {
           truckMarkers[name] = L.marker([lat, lon], { icon: truckIcon })
@@ -555,9 +655,9 @@
         }
       }
 
-      // 2) Supprimer les marqueurs qui ne sont plus dans la réponse
+      // delete markers not present anymore
       for (const name of Object.keys(truckMarkers)) {
-        if (!seenNames.has(name)) {
+        if (!seen.has(name)) {
           map.removeLayer(truckMarkers[name]);
           delete truckMarkers[name];
         }
@@ -567,7 +667,7 @@
     } catch (e) {
       console.error(e);
       setMini("❌ trucks-get erreur: " + (e?.message || e));
-      alert("Erreur trucks-get. Ouvre la console (F12) et regarde l’erreur.");
+      alert("Erreur trucks-get. Ouvre la console (F12) pour voir le détail.");
     } finally {
       btn.disabled = false;
       btn.innerText = oldText;
@@ -598,12 +698,15 @@
   // =========================
   document.getElementById("btnSearch").addEventListener("click", search);
   document.getElementById("address").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
+
   document.getElementById("loginBtn").addEventListener("click", doLogin);
   document.getElementById("logoutBtn").addEventListener("click", logout);
 
   document.getElementById("btnLoadTrucks").addEventListener("click", loadTrucksOnce);
   document.getElementById("btnHideTrucks").addEventListener("click", hideTrucks);
   document.getElementById("btnFitTrucks").addEventListener("click", fitTrucks);
+
+  document.getElementById("btnEndIntervention").addEventListener("click", endIntervention);
 
   initMap(48.8566, 2.3522);
   updateTruckUI();
