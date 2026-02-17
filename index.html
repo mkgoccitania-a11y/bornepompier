@@ -2,18 +2,8 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>BornePompier — Top 5 + Itinéraire + Login + Camions</title>
-
-  <!-- PWA -->
-  <meta name="theme-color" content="#ffffff">
-  <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="icon" href="./icons/icon-192.png">
-
-  <!-- iOS (bonus) -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="apple-touch-icon" href="./icons/icon-192.png">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -26,81 +16,51 @@
     body { margin:0; font-family: Arial, sans-serif; }
     #map { height:100vh; width:100%; }
 
-    /* Panel style "webapp" */
     #uiPanel{
       position:absolute; top:12px; left:12px;
       z-index:1200;
-      width:min(860px, calc(100% - 24px));
-      background: rgba(255,255,255,.92);
-      border: 1px solid rgba(255,255,255,.6);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border-radius:16px;
+      width:min(900px, calc(100% - 24px));
+      background:#fff;
+      border-radius:14px;
       padding:14px;
-      box-shadow:0 18px 50px rgba(0,0,0,.20);
+      box-shadow:0 12px 32px rgba(0,0,0,.18);
       max-height: calc(100vh - 24px);
-      overflow: auto;
-    }
-    #uiPanel::-webkit-scrollbar{ width:10px; }
-    #uiPanel::-webkit-scrollbar-thumb{
-      background: rgba(0,0,0,.15);
-      border-radius: 999px;
+      overflow:auto;
     }
 
     #topbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    #topbar h2{ font-size: 18px; letter-spacing:.2px; margin:0; }
     #logoutBtn { margin-left:auto; }
 
     .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    input{
-      padding:10px; width:min(560px, 100%); font-size:16px;
-      border: 1px solid #e8e8e8; border-radius: 12px; outline: none;
-      background:#fff;
-    }
-    input:focus{
-      border-color: #c9ddff;
-      box-shadow: 0 0 0 4px rgba(40,120,255,.12);
-    }
-    button{
-      padding:10px 14px; font-size:16px; cursor:pointer;
-      border: 1px solid #e8e8e8; background:#fff; border-radius: 12px;
-      transition: transform .05s ease, box-shadow .2s ease;
-    }
-    button:hover{ box-shadow:0 10px 18px rgba(0,0,0,.12); }
-    button:active{ transform: translateY(1px); }
-    button:disabled{ opacity:.6; cursor:not-allowed; box-shadow:none; }
+    input { padding:10px; width:min(560px, 100%); font-size:16px; }
+    button { padding:10px 14px; font-size:16px; cursor:pointer; }
 
     #status { margin-top:10px; color:#444; white-space:pre-wrap; }
     #miniStatus { margin-top:6px; font-size:12px; color:#666; white-space:pre-wrap; }
 
-    #results{
-      margin-top: 12px;
-      border: none;
-      border-radius: 14px;
-      overflow:hidden;
-      background: rgba(255,255,255,.85);
-      box-shadow: 0 10px 26px rgba(0,0,0,.12);
-    }
-    .item { padding: 12px; border-bottom: 1px solid rgba(0,0,0,.06); }
+    #results { margin-top: 14px; border: 1px solid #eee; border-radius: 10px; overflow:hidden; background:#fff; }
+    .item { padding: 12px; border-bottom: 1px solid #f0f0f0; }
     .item:last-child { border-bottom:none; }
-    .item.reco { background: rgba(50,205,50,.12); }
+    .item.reco { background: #f1fff1; }
     .title { font-weight: 700; }
     .meta { margin-top:6px; color:#555; font-size:14px; line-height:1.35; }
     .actions { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
-    .pill { display:inline-block; padding:2px 8px; border:1px solid rgba(0,0,0,.12); border-radius:999px; font-size:12px; color:#444; margin-right:6px; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; color:#444; margin-right:6px; }
 
-    #navPanel { margin-top: 12px; border:1px solid rgba(0,0,0,.10); border-radius: 14px; padding: 10px; background: rgba(255,255,255,.85); }
+    #navPanel { margin-top: 12px; border:1px solid #eee; border-radius: 10px; padding: 10px; background:#fff; }
     #navPanel h4 { margin: 0 0 8px 0; }
     #navPanel ol { margin: 0; padding-left: 20px; }
 
-    .badge { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid rgba(0,0,0,.10); border-radius:999px; background: rgba(0,0,0,.04); }
+    .badge { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid #eee; border-radius:999px; background:#fafafa; }
 
-    /* Hydrant bigger (emoji) */
-    .hydrant-icon{
-      font-size: 28px;
-      line-height: 34px;
-      text-align: center;
-      filter: drop-shadow(0 6px 10px rgba(0,0,0,.25));
+    /* Intervention panel */
+    #interventionPanel{
+      display:none;
+      margin-top:10px;
+      padding:10px;
+      border:1px solid #ddd;
+      border-radius:10px;
+      background:#fff;
     }
 
     /* Login modal */
@@ -119,7 +79,7 @@
 
   <div id="uiPanel">
     <div id="topbar">
-      <h2>🚒 BornePompier</h2>
+      <h2 style="margin:0;">🚒 BornePompier</h2>
 
       <button id="btnLoadTrucks">Afficher / Rafraîchir camions</button>
       <button id="btnHideTrucks">Masquer camions</button>
@@ -130,7 +90,7 @@
     </div>
 
     <p style="margin:8px 0 0; color:#444;">
-      Adresse intervention → Top 5 bornes → itinéraire (dans la page) + camions (sur demande).
+      Adresse intervention → Top 5 bornes → itinéraire (auto au choix) + intervention active + camions (sur demande).
     </p>
 
     <div class="row" style="margin-top:10px;">
@@ -140,6 +100,14 @@
 
     <div id="status"></div>
     <div id="miniStatus"></div>
+
+    <div id="interventionPanel">
+      <h4 style="margin:0 0 8px;">🚨 Intervention active</h4>
+      <div id="interventionInfo" style="color:#444;"></div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnEndIntervention">Terminer l’intervention</button>
+      </div>
+    </div>
 
     <div id="navPanel" style="display:none;">
       <h4>🧭 Itinéraire</h4>
@@ -172,21 +140,15 @@
 
 <script>
   // =========================
-  // PWA: register service worker
-  // =========================
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./service-worker.js').catch(console.error);
-    });
-  }
-
-  // =========================
-  // URLs n8n (⚠️ garde tes URLs ici)
+  // 1) URLs n8n (bornes + login)
   // =========================
   const N8N_TOP5_URL   = "https://bornepompier.app.n8n.cloud/webhook/top5-bornes";
   const N8N_LOGIN_URL  = "https://bornepompier.app.n8n.cloud/webhook/login";
   const N8N_CHOOSE_URL = "https://bornepompier.app.n8n.cloud/webhook/choose";
 
+  // =========================
+  // 2) URLs n8n (camions)
+  // =========================
   const N8N_TRUCKS_UPDATE_URL = "https://bornepompier.app.n8n.cloud/webhook/trucks-update";
   const N8N_TRUCKS_GET_URL    = "https://bornepompier.app.n8n.cloud/webhook/trucks-get";
 
@@ -200,7 +162,7 @@
 
   // Camions
   let myTruckMarker = null;
-  const truckMarkers = {}; // {name: marker}
+  const truckMarkers = {}; // {truckName: marker}
 
   let session = {
     token: localStorage.getItem("bp_token") || "",
@@ -217,9 +179,10 @@
   }
 
   // =========================
-  // Icons
+  // Icônes
   // =========================
   const FIRE_TRUCK_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4325/4325959.png";
+
   const truckIcon = L.icon({
     iconUrl: FIRE_TRUCK_ICON_URL,
     iconSize: [46, 46],
@@ -227,16 +190,55 @@
     popupAnchor: [0, -42]
   });
 
-  // ✅ Bornes plus grosses (emoji + CSS)
   const hydrantIcon = L.divIcon({
-    className: "hydrant-icon",
+    className: "",
     html: "🧯",
-    iconSize: [34, 34],
-    iconAnchor: [17, 17]
+    iconSize: [18, 18],
+    iconAnchor: [9, 9]
+  });
+
+  const selectedHydrantIcon = L.divIcon({
+    className: "",
+    html: "🔴",
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
   });
 
   // =========================
-  // Map
+  // Intervention state
+  // =========================
+  let activeIntervention = null;
+  let selectedHydrantMarker = null;
+
+  function showActiveInterventionPanel() {
+    const panel = document.getElementById("interventionPanel");
+    const info = document.getElementById("interventionInfo");
+    if (!activeIntervention) return;
+
+    info.innerHTML = `
+      <b>Borne :</b> ${escapeHtml(activeIntervention.borneId)}<br>
+      <b>Camion :</b> ${escapeHtml(session.truck_id || "-")}<br>
+      <b>Début :</b> ${new Date(activeIntervention.startedAt).toLocaleTimeString()}
+    `;
+
+    panel.style.display = "block";
+  }
+
+  function endIntervention() {
+    activeIntervention = null;
+    document.getElementById("interventionPanel").style.display = "none";
+
+    // Remet l’icône précédente si existante
+    if (selectedHydrantMarker) {
+      selectedHydrantMarker.setIcon(hydrantIcon);
+    }
+
+    clearRoute();
+    setMini("✅ Intervention terminée.");
+  }
+
+  // =========================
+  // Map init
   // =========================
   function initMap(centerLat, centerLon) {
     if (map) map.remove();
@@ -280,7 +282,7 @@
   }
 
   // =========================
-  // Routing (OSRM)
+  // Itinéraire (OSRM)
   // =========================
   function buildRouteTo(lat, lon) {
     if (!lastUserLatLon) {
@@ -335,7 +337,7 @@
   }
 
   // =========================
-  // Bornes UI
+  // UI results (bornes)
   // =========================
   function renderResults(results) {
     const container = document.getElementById("results");
@@ -376,10 +378,36 @@
   };
   window.routeTo = function(lat, lon) { buildRouteTo(lat, lon); };
 
+  // ✅ Choisir = itinéraire auto + borne rouge + panneau + log Airtable
   window.chooseBorne = async function(borneId, lat, lon, osm_id) {
-    alert("✅ Borne choisie : " + borneId);
 
-    if (!N8N_CHOOSE_URL) return;
+    // si on avait déjà un marker sélectionné rouge, on remet en normal
+    if (selectedHydrantMarker) {
+      selectedHydrantMarker.setIcon(hydrantIcon);
+    }
+
+    // intervention active en mémoire
+    activeIntervention = {
+      borneId,
+      lat,
+      lon,
+      osm_id,
+      startedAt: new Date().toISOString()
+    };
+
+    // lance itinéraire automatiquement
+    buildRouteTo(lat, lon);
+
+    // borne rouge si on a capturé le marker cliqué
+    if (selectedHydrantMarker) {
+      selectedHydrantMarker.setIcon(selectedHydrantIcon);
+    }
+
+    // panneau intervention
+    showActiveInterventionPanel();
+    setMini(`🚨 Intervention lancée sur ${borneId}`);
+
+    // log serveur
     try {
       await fetch(N8N_CHOOSE_URL, {
         method: "POST",
@@ -387,15 +415,22 @@
           "Content-Type": "application/json",
           ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
         },
-        body: JSON.stringify({ truck_id: session.truck_id, borne_id: borneId, lat, lon, osm_id })
+        body: JSON.stringify({
+          truck_id: session.truck_id,
+          borne_id: borneId,
+          lat,
+          lon,
+          osm_id
+        })
       });
     } catch (e) {
       console.warn("choose webhook failed", e);
+      setMini("⚠️ Intervention affichée, mais log serveur en erreur (voir console).");
     }
   };
 
   // =========================
-  // Search Top5
+  // Search → Top5 (bornes)
   // =========================
   async function search() {
     const address = document.getElementById("address").value.trim();
@@ -426,6 +461,9 @@
       markersLayer.clearLayers();
       clearRoute();
 
+      // reset sélection marker hydrant
+      selectedHydrantMarker = null;
+
       if (!results.length) {
         setStatus("Aucune borne trouvée.\n\nDebug réponse brute :\n" + rawText);
         renderResults([]);
@@ -440,7 +478,15 @@
           `<br><button onclick="routeTo(${r.lat}, ${r.lon})">Itinéraire</button>` +
           `<br><button onclick="chooseBorne('${escapeHtml(borneId)}', ${r.lat}, ${r.lon}, ${r.osm_id || "null"})">Choisir</button>`;
 
-        const marker = L.marker([r.lat, r.lon], { icon: hydrantIcon }).addTo(markersLayer).bindPopup(popup);
+        const marker = L.marker([r.lat, r.lon], { icon: hydrantIcon })
+          .addTo(markersLayer)
+          .bindPopup(popup);
+
+        // ⚠️ clé: mémoriser le marker cliqué, pour pouvoir le passer en rouge au "Choisir"
+        marker.on("click", () => {
+          selectedHydrantMarker = marker;
+        });
+
         if (r.recommended) marker.openPopup();
       });
 
@@ -537,7 +583,7 @@
   }
 
   // =========================
-  // Camion GPS + GET on demand
+  // Camion GPS (update) + Camions (get)
   // =========================
   function startTruckTracking() {
     if (!navigator.geolocation) {
@@ -549,6 +595,7 @@
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
 
+      // Marker local (mon camion)
       if (!myTruckMarker) {
         myTruckMarker = L.marker([lat, lon], { icon: truckIcon })
           .addTo(map)
@@ -557,6 +604,7 @@
         myTruckMarker.setLatLng([lat, lon]);
       }
 
+      // Envoi position si loggué
       if (session.truck_id) {
         fetch(N8N_TRUCKS_UPDATE_URL, {
           method: "POST",
@@ -576,10 +624,11 @@
     btn.disabled = true;
     const oldText = btn.innerText;
     btn.innerText = "Chargement…";
+
     setMini("📡 Appel trucks-get…");
 
     try {
-      const res = await fetch(N8N_TRUCKS_GET_URL, { cache: "no-store" });
+      const res = await fetch(N8N_TRUCKS_GET_URL, { cache:"no-store" });
       const text = await res.text();
       if (!res.ok) throw new Error("HTTP " + res.status + " — " + text);
 
@@ -606,7 +655,7 @@
         }
       }
 
-      // remove markers not returned
+      // delete markers not present anymore
       for (const name of Object.keys(truckMarkers)) {
         if (!seen.has(name)) {
           map.removeLayer(truckMarkers[name]);
@@ -635,7 +684,10 @@
 
   function fitTrucks() {
     const names = Object.keys(truckMarkers);
-    if (!names.length) { setMini("ℹ️ Aucun camion affiché."); return; }
+    if (!names.length) {
+      setMini("ℹ️ Aucun camion affiché.");
+      return;
+    }
     const latlngs = names.map(n => truckMarkers[n].getLatLng());
     map.fitBounds(L.latLngBounds(latlngs).pad(0.25));
     setMini("🧭 Centré sur les camions.");
@@ -646,12 +698,15 @@
   // =========================
   document.getElementById("btnSearch").addEventListener("click", search);
   document.getElementById("address").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
+
   document.getElementById("loginBtn").addEventListener("click", doLogin);
   document.getElementById("logoutBtn").addEventListener("click", logout);
 
   document.getElementById("btnLoadTrucks").addEventListener("click", loadTrucksOnce);
   document.getElementById("btnHideTrucks").addEventListener("click", hideTrucks);
   document.getElementById("btnFitTrucks").addEventListener("click", fitTrucks);
+
+  document.getElementById("btnEndIntervention").addEventListener("click", endIntervention);
 
   initMap(48.8566, 2.3522);
   updateTruckUI();
