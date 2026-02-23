@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>BornePompier — Top 5 + Itinéraire + Login + Camions</title>
+  <title>BornePompier — Top 5 + Itinéraire + Login + Camions + Lock + Fin intervention</title>
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -19,7 +19,7 @@
     #uiPanel{
       position:absolute; top:12px; left:12px;
       z-index:1200;
-      width:min(860px, calc(100% - 24px));
+      width:min(920px, calc(100% - 24px));
       background: rgba(255,255,255,.92);
       border: 1px solid rgba(255,255,255,.6);
       backdrop-filter: blur(10px);
@@ -33,7 +33,8 @@
 
     #topbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     #topbar h2{ font-size: 18px; margin:0; }
-    #logoutBtn { margin-left:auto; }
+    #logoutBtn { margin-left:auto; display:none; } /* Désactivé par design */
+    #endInterBtn { margin-left:auto; display:none; }
 
     .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     input{
@@ -60,6 +61,18 @@
     .item { padding: 12px; border-bottom: 1px solid rgba(0,0,0,.06); }
     .item:last-child { border-bottom:none; }
     .item.reco { background: rgba(50,205,50,.12); }
+
+    /* ✅ sélection locale (camion courant) */
+    .item.selected{
+      outline: 3px solid rgba(255,165,0,.95);
+      background: rgba(255,165,0,.12);
+    }
+
+    /* ✅ borne "occupée" par un autre camion */
+    .item.locked{
+      background: rgba(255,0,0,.07);
+    }
+
     .title { font-weight: 700; }
     .meta { margin-top:6px; color:#555; font-size:14px; line-height:1.35; }
     .actions { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
@@ -101,11 +114,16 @@
       <button id="btnHideTrucks">Masquer camions</button>
 
       <div class="badge" id="truckBadge" style="display:none;"></div>
-      <button id="logoutBtn" style="display:none;">Déconnexion</button>
+
+      <!-- ✅ bouton fin d'intervention -->
+      <button id="endInterBtn">Fin d’intervention</button>
+
+      <!-- ❌ on garde le bouton mais on ne l’utilise plus -->
+      <button id="logoutBtn">Déconnexion</button>
     </div>
 
     <p style="margin:8px 0 0; color:#444;">
-      Adresse intervention → Top 5 bornes → itinéraire dans la page. (Choisir = lance l’itinéraire)
+      Adresse intervention → Top 5 bornes → itinéraire dans la page. (Choisir = enregistre + route + lock)
     </p>
 
     <div class="row" style="margin-top:10px;">
@@ -147,11 +165,13 @@
 
 <script>
   // =========================
-  // URLs n8n (⚠️ tes URLs)
+  // URLs n8n (⚠️ mets TES URLs)
   // =========================
-  const N8N_TOP5_URL   = "https://bornepompier.app.n8n.cloud/webhook/top5-bornes";
-  const N8N_LOGIN_URL  = "https://bornepompier.app.n8n.cloud/webhook/login";
-  const N8N_CHOOSE_URL = "https://bornepompier.app.n8n.cloud/webhook/choose";
+  const N8N_TOP5_URL      = "https://bornepompier.app.n8n.cloud/webhook/top5-bornes";
+  const N8N_LOGIN_URL     = "https://bornepompier.app.n8n.cloud/webhook/login";
+  const N8N_CHOOSE_URL    = "https://bornepompier.app.n8n.cloud/webhook/choose";
+  const N8N_END_URL       = "https://bornepompier.app.n8n.cloud/webhook/end-intervention";
+  const N8N_CHOICES_GET   = "https://bornepompier.app.n8n.cloud/webhook/choices-get";
 
   const N8N_TRUCKS_UPDATE_URL = "https://bornepompier.app.n8n.cloud/webhook/trucks-update";
   const N8N_TRUCKS_GET_URL    = "https://bornepompier.app.n8n.cloud/webhook/trucks-get";
@@ -167,9 +187,18 @@
   let myTruckMarker = null;
   const truckMarkers = {}; // {name: marker}
 
+  // bornes
+  const borneMarkers = {}; // borneId -> marker
+  let lastResults = [];
+  let selectedBorneId = localStorage.getItem("bp_selected_borne") || "";
+
+  // {borneId: {truck_id, intervention_id, ts}}
+  let choicesByBorne = {};
+
   let session = {
     token: localStorage.getItem("bp_token") || "",
-    truck_id: localStorage.getItem("bp_truck_id") || ""
+    truck_id: localStorage.getItem("bp_truck_id") || "",
+    intervention_id: localStorage.getItem("bp_intervention_id") || ""
   };
 
   function setStatus(msg) { document.getElementById("status").innerText = msg || ""; }
@@ -299,7 +328,7 @@
   }
 
   // =========================
-  // Bornes UI
+  // UI bornes
   // =========================
   function renderResults(results) {
     const container = document.getElementById("results");
@@ -311,61 +340,106 @@
 
     results.forEach(r => {
       const borneId = r.borne_id || (r.ref ? String(r.ref) : (r.osm_id ? `OSM-${r.osm_id}` : "BORNE"));
+      const chosen = choicesByBorne[borneId]; // {truck_id, intervention_id, ts}
+
+      const isSelected = (borneId === selectedBorneId);
+      const isLockedByOther = chosen?.truck_id && session.truck_id && chosen.truck_id !== session.truck_id;
+
       const div = document.createElement("div");
-      div.className = "item" + (r.recommended ? " reco" : "");
+      div.className =
+        "item" +
+        (r.recommended ? " reco" : "") +
+        (isSelected ? " selected" : "") +
+        (isLockedByOther ? " locked" : "");
+
+      const chosenPill = chosen?.truck_id
+        ? `<span class="pill">🚒 Choisie par: ${escapeHtml(chosen.truck_id)}</span>`
+        : "";
 
       div.innerHTML = `
         <div class="title">🧯 ${escapeHtml(r.rank)}️⃣ ${escapeHtml(borneId)} ${r.recommended ? "⭐ Recommandée" : ""}</div>
         <div class="meta">
           <span class="pill">${escapeHtml(r.distance_m)} m</span>
+          ${chosenPill}
           ${r.type ? `<span class="pill">Type: ${escapeHtml(r.type)}</span>` : ``}
           ${r.position ? `<span class="pill">Pos: ${escapeHtml(r.position)}</span>` : ``}
           ${r.diameter ? `<span class="pill">Ø: ${escapeHtml(r.diameter)}</span>` : ``}
           ${r.coupling ? `<span class="pill">Raccord: ${escapeHtml(r.coupling)}</span>` : ``}
         </div>
         <div class="actions">
-          <button onclick="focusOn(${r.lat}, ${r.lon}, '${escapeHtml(borneId)}')">Voir</button>
-          <button onclick="routeTo(${r.lat}, ${r.lon})">Itinéraire</button>
-          <button onclick="chooseBorne('${escapeHtml(borneId)}', ${r.lat}, ${r.lon}, ${r.osm_id || "null"})">Choisir</button>
+          <button class="btnSee">Voir</button>
+          <button class="btnRoute">Itinéraire</button>
+          <button class="btnChoose" ${(!session.truck_id || !session.intervention_id) ? "disabled" : ""}>
+            Choisir
+          </button>
         </div>
       `;
+
+      // ✅ listeners (pas de onclick string → pas de bug apostrophe)
+      div.querySelector(".btnSee").addEventListener("click", () => focusOn(r.lat, r.lon, borneId));
+      div.querySelector(".btnRoute").addEventListener("click", () => routeTo(r.lat, r.lon));
+      div.querySelector(".btnChoose").addEventListener("click", () => chooseBorne(borneId, r.lat, r.lon, r.osm_id || null));
+
       container.appendChild(div);
     });
   }
 
-  window.focusOn = function(lat, lon, borneId) {
+  function focusOn(lat, lon, borneId) {
     if (!map) return;
     map.setView([lat, lon], 17);
     setStatus("📍 " + borneId);
-  };
-  window.routeTo = function(lat, lon) { buildRouteTo(lat, lon); };
+    borneMarkers[borneId]?.openPopup?.();
+  }
 
-  // ✅ ICI: Choisir => enregistre + lance l’itinéraire automatiquement
-  window.chooseBorne = async function(borneId, lat, lon, osm_id) {
-    setStatus("✅ Borne choisie : " + borneId + " — Calcul itinéraire…");
+  function routeTo(lat, lon) { buildRouteTo(lat, lon); }
 
-    // 1) log côté serveur (optionnel mais on le garde)
-    if (N8N_CHOOSE_URL) {
-      try {
-        await fetch(N8N_CHOOSE_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
-          },
-          body: JSON.stringify({ truck_id: session.truck_id, borne_id: borneId, lat, lon, osm_id })
-        });
-      } catch (e) {
-        console.warn("choose webhook failed", e);
-      }
+  // =========================
+  // Choisir borne (lock + route)
+  // =========================
+  async function chooseBorne(borneId, lat, lon, osm_id) {
+    if (!session.truck_id || !session.intervention_id) {
+      alert("Tu dois être connecté et en intervention active.");
+      return;
     }
 
-    // 2) lancer l’itinéraire vers la borne choisie
-    buildRouteTo(lat, lon);
+    setStatus("✅ Borne choisie : " + borneId + " — Enregistrement + itinéraire…");
 
-    // 3) centre (un peu) la vue sur la borne/route
+    // Optimiste côté UI
+    selectedBorneId = borneId;
+    localStorage.setItem("bp_selected_borne", borneId);
+
+    // Marque localement comme "choisie par moi"
+    choicesByBorne[borneId] = { truck_id: session.truck_id, intervention_id: session.intervention_id, ts: new Date().toISOString() };
+    renderResults(lastResults);
+
+    // 1) log côté serveur (Airtable via n8n)
+    try {
+      await fetch(N8N_CHOOSE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
+        },
+        body: JSON.stringify({
+          truck_id: session.truck_id,
+          intervention_id: session.intervention_id,
+          borne_id: borneId,
+          lat, lon, osm_id
+        })
+      });
+    } catch (e) {
+      console.warn("choose webhook failed", e);
+      setMini("⚠️ choose webhook fail (voir console).");
+    }
+
+    // 2) route
+    buildRouteTo(lat, lon);
     map.setView([lat, lon], 16);
-  };
+    borneMarkers[borneId]?.openPopup?.();
+
+    // 3) refresh global choices pour que tout le monde soit synchro
+    refreshChoices();
+  }
 
   // =========================
   // Search Top5
@@ -373,6 +447,11 @@
   async function search() {
     const address = document.getElementById("address").value.trim();
     if (!address) { setStatus("⚠️ Entre une adresse."); return; }
+    if (!session.truck_id || !session.intervention_id) {
+      setStatus("⚠️ Connecte-toi d’abord (intervention active).");
+      showLogin(false);
+      return;
+    }
 
     setStatus("⏳ Recherche en cours…");
     document.getElementById("btnSearch").disabled = true;
@@ -384,7 +463,11 @@
           "Content-Type": "application/json",
           ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
         },
-        body: JSON.stringify({ address, truck_id: session.truck_id })
+        body: JSON.stringify({
+          address,
+          truck_id: session.truck_id,
+          intervention_id: session.intervention_id
+        })
       });
 
       const rawText = await res.text();
@@ -393,12 +476,18 @@
       let data;
       try { data = JSON.parse(rawText); } catch { data = rawText; }
       const results = normalizeResults(data);
+      lastResults = results;
 
-      // Origine itinéraire = adresse intervention
       await geocodeClientForOrigin(address);
+
+      // refresh locks/choices
+      await refreshChoices();
 
       markersLayer.clearLayers();
       clearRoute();
+
+      // reset marker map
+      for (const k of Object.keys(borneMarkers)) delete borneMarkers[k];
 
       if (!results.length) {
         setStatus("Aucune borne trouvée.\n\nDebug réponse brute :\n" + rawText);
@@ -408,14 +497,33 @@
 
       results.forEach(r => {
         const borneId = r.borne_id || (r.ref ? String(r.ref) : (r.osm_id ? `OSM-${r.osm_id}` : "BORNE"));
+        const chosen = choicesByBorne[borneId];
+        const chosenLine = chosen?.truck_id ? `<br><b>🚒 Choisie par: ${escapeHtml(chosen.truck_id)}</b>` : "";
+
         const popup =
           `<b>🧯 ${escapeHtml(borneId)}</b>` +
+          chosenLine +
           `<br>${escapeHtml(r.distance_m)} m` +
-          `<br><button onclick="routeTo(${r.lat}, ${r.lon})">Itinéraire</button>` +
-          `<br><button onclick="chooseBorne('${escapeHtml(borneId)}', ${r.lat}, ${r.lon}, ${r.osm_id || "null"})">Choisir</button>`;
+          `<br><button class="pRoute">Itinéraire</button>` +
+          `<br><button class="pChoose">Choisir</button>`;
 
-        const marker = L.marker([r.lat, r.lon], { icon: hydrantIcon }).addTo(markersLayer).bindPopup(popup);
-        if (r.recommended) marker.openPopup();
+        const marker = L.marker([r.lat, r.lon], { icon: hydrantIcon })
+          .addTo(markersLayer)
+          .bindPopup(popup);
+
+        marker.on("popupopen", (e) => {
+          const el = e.popup.getElement();
+          if (!el) return;
+          const btnR = el.querySelector(".pRoute");
+          const btnC = el.querySelector(".pChoose");
+          btnR?.addEventListener("click", () => routeTo(r.lat, r.lon));
+          btnC?.addEventListener("click", () => chooseBorne(borneId, r.lat, r.lon, r.osm_id || null));
+        });
+
+        borneMarkers[borneId] = marker;
+
+        // ouvre popup si c’est la sélection actuelle
+        if (borneId === selectedBorneId) marker.openPopup();
       });
 
       setStatus("✅ Top 5 affiché. (" + results.length + " résultats)");
@@ -438,7 +546,43 @@
   }
 
   // =========================
-  // Login
+  // Choices refresh (multi-camions)
+  // =========================
+  async function refreshChoices() {
+    try {
+      const res = await fetch(N8N_CHOICES_GET, { cache: "no-store" });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || ("HTTP " + res.status));
+
+      let data; try { data = JSON.parse(text); } catch { data = []; }
+      if (!Array.isArray(data)) data = [];
+
+      const obj = {};
+      for (const c of data) {
+        if (!c?.borne_id || !c?.truck_id) continue;
+        obj[String(c.borne_id)] = {
+          truck_id: String(c.truck_id),
+          intervention_id: c.intervention_id ? String(c.intervention_id) : "",
+          ts: c.ts || ""
+        };
+      }
+      choicesByBorne = obj;
+
+      // update UI if we have results
+      if (lastResults.length) renderResults(lastResults);
+
+      // update popups text (simple: reopen selected)
+      if (selectedBorneId && borneMarkers[selectedBorneId]) {
+        // pas obligatoire, mais pratique
+      }
+
+    } catch (e) {
+      console.warn("refreshChoices failed", e);
+    }
+  }
+
+  // =========================
+  // Login / Session
   // =========================
   function showLogin(force) {
     document.getElementById("loginOverlay").style.display = "flex";
@@ -452,14 +596,19 @@
 
   function updateTruckUI() {
     const badge = document.getElementById("truckBadge");
-    const logoutBtn = document.getElementById("logoutBtn");
-    if (session.truck_id) {
+    const endBtn = document.getElementById("endInterBtn");
+
+    if (session.truck_id && session.intervention_id) {
       badge.style.display = "inline-flex";
-      badge.innerHTML = `🚒 Camion: <b>${escapeHtml(session.truck_id)}</b>`;
-      logoutBtn.style.display = "inline-block";
+      badge.innerHTML = `🚒 Camion: <b>${escapeHtml(session.truck_id)}</b> • 🧾 Intervention: <b>${escapeHtml(session.intervention_id)}</b>`;
+      endBtn.style.display = "inline-block";
+    } else if (session.truck_id) {
+      badge.style.display = "inline-flex";
+      badge.innerHTML = `🚒 Camion: <b>${escapeHtml(session.truck_id)}</b> • (pas d’intervention)`;
+      endBtn.style.display = "none";
     } else {
       badge.style.display = "none";
-      logoutBtn.style.display = "none";
+      endBtn.style.display = "none";
     }
   }
 
@@ -489,25 +638,74 @@
         return;
       }
 
-      session = { truck_id: data.truck_id || truck_id, token: data.token || "" };
+      session = {
+        truck_id: data.truck_id || truck_id,
+        token: data.token || "",
+        intervention_id: data.intervention_id || ""
+      };
+
       localStorage.setItem("bp_truck_id", session.truck_id);
       localStorage.setItem("bp_token", session.token);
+      localStorage.setItem("bp_intervention_id", session.intervention_id);
+
+      if (data.selected_borne_id) {
+        selectedBorneId = data.selected_borne_id;
+        localStorage.setItem("bp_selected_borne", selectedBorneId);
+      }
 
       hideLogin();
       updateTruckUI();
-      setStatus("✅ Connecté: " + session.truck_id);
+      setStatus("✅ Connecté: " + session.truck_id + "\nIntervention active: " + session.intervention_id + "\nEntre une adresse puis clique sur Rechercher.");
+
+      refreshChoices();
     } catch (e) {
       statusEl.style.color = "#b00";
       statusEl.innerText = "Erreur login: " + (e?.message || e);
     }
   }
 
-  function logout() {
-    localStorage.removeItem("bp_truck_id");
+  // ✅ fin d’intervention = seule façon de “déconnecter”
+  async function endIntervention() {
+    if (!session.truck_id || !session.intervention_id) return;
+
+    if (!confirm("Fin d’intervention ? Cela libère la borne et ferme la session.")) return;
+
+    try {
+      await fetch(N8N_END_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session.token ? { "Authorization": "Bearer " + session.token } : {})
+        },
+        body: JSON.stringify({
+          truck_id: session.truck_id,
+          intervention_id: session.intervention_id
+        })
+      });
+    } catch (e) {
+      alert("Erreur fin d’intervention (voir console).");
+      console.warn(e);
+    }
+
+    // purge locale
+    localStorage.removeItem("bp_intervention_id");
     localStorage.removeItem("bp_token");
-    session = { truck_id:"", token:"" };
+    localStorage.removeItem("bp_selected_borne");
+    // on peut garder bp_truck_id si tu veux (préremplir), mais ici on l’efface:
+    localStorage.removeItem("bp_truck_id");
+
+    session = { truck_id:"", token:"", intervention_id:"" };
+    selectedBorneId = "";
+    lastResults = [];
+    choicesByBorne = {};
+    renderResults([]);
+    markersLayer?.clearLayers?.();
+    clearRoute();
+
     updateTruckUI();
     showLogin(true);
+    setStatus("✅ Intervention terminée. Reconnecte un camion pour une nouvelle intervention.");
+    refreshChoices();
   }
 
   // =========================
@@ -579,7 +777,6 @@
         }
       }
 
-      // supprime ceux non retournés
       for (const name of Object.keys(truckMarkers)) {
         if (!seen.has(name)) {
           map.removeLayer(truckMarkers[name]);
@@ -612,7 +809,8 @@
   document.getElementById("btnSearch").addEventListener("click", search);
   document.getElementById("address").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
   document.getElementById("loginBtn").addEventListener("click", doLogin);
-  document.getElementById("logoutBtn").addEventListener("click", logout);
+
+  document.getElementById("endInterBtn").addEventListener("click", endIntervention);
 
   document.getElementById("btnLoadTrucks").addEventListener("click", loadTrucksOnce);
   document.getElementById("btnHideTrucks").addEventListener("click", hideTrucks);
@@ -620,8 +818,13 @@
   initMap(48.8566, 2.3522);
   updateTruckUI();
 
-  if (!session.truck_id) showLogin(false);
-  else setStatus("Connecté: " + session.truck_id + "\nEntre une adresse puis clique sur Rechercher.");
+  // polling locks/choices (multi camions)
+  setInterval(refreshChoices, 5000);
+  refreshChoices();
+
+  // Forcer login si pas de session intervention active
+  if (!session.truck_id || !session.intervention_id) showLogin(false);
+  else setStatus("Connecté: " + session.truck_id + "\nIntervention: " + session.intervention_id + "\nEntre une adresse puis clique sur Rechercher.");
 
   startTruckTracking();
 </script>
